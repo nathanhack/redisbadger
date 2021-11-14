@@ -63,7 +63,7 @@ var rootCmd = &cobra.Command{
 				command := strings.ToUpper(string(cmd.Args[0]))
 				switch command {
 				default:
-					conn.WriteError("ERR unknoWn command '" + string(cmd.Args[0]) + "'")
+					conn.WriteError("ERR unknown command '" + string(cmd.Args[0]) + "'")
 				case commands.Ping:
 					//PING [message]
 					switch len(cmd.Args) {
@@ -197,7 +197,6 @@ var rootCmd = &cobra.Command{
 					for _, key := range keys {
 						conn.WriteBulkString(string(key))
 					}
-
 				case commands.Publish:
 					if len(cmd.Args) != 3 {
 						conn.WriteError("ERR wrong number of arguments for '" + string(cmd.Args[0]) + "' command")
