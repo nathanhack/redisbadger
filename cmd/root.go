@@ -168,14 +168,13 @@ var rootCmd = &cobra.Command{
 						activeScans[conn.RemoteAddr()] = scan
 
 						scan.it.Rewind()
-						//badger.DefaultIteratorOptions.PrefetchSize
-						for i := uint64(0); i < uint64(1)*cursorValue; i++ {
+						for i := uint64(0); i < uint64(badger.DefaultIteratorOptions.PrefetchSize)*cursorValue; i++ {
 							scan.it.Next()
 						}
 					}
 
 					keys := make([][]byte, 0)
-					for ; scan.it.Valid() && len(keys) < 1; scan.it.Next() {
+					for ; scan.it.Valid() && len(keys) < badger.DefaultIteratorOptions.PrefetchSize; scan.it.Next() {
 						keys = append(keys, scan.it.Item().KeyCopy(nil))
 					}
 
