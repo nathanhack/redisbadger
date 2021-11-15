@@ -49,6 +49,7 @@ var rootCmd = &cobra.Command{
 
 		if debug {
 			logrus.SetLevel(logrus.DebugLevel)
+			logrus.Info("Debug enabled")
 		}
 
 		logrus.Printf("started server at %s", addr)
@@ -140,9 +141,28 @@ var rootCmd = &cobra.Command{
 				case commands.Scan:
 					//SCAN cursor [MATCH pattern] [COUNT count] [TYPE type]
 
-					if len(cmd.Args) != 2 {
+					if len(cmd.Args) < 1 || 8 < len(cmd.Args) {
 						conn.WriteError("ERR wrong number of arguments for '" + string(cmd.Args[0]) + "' command")
 						return
+					}
+
+					argStrings := argsToStrings(cmd.Args)
+					_, hasType := scanFlags(argStrings, "TYPE")
+					//match, hasMatch := scanFlags(argStrings, "MATCH") // a future feature
+					//count, hasCount := scanFlags(argStrings, "COUNT") // not implemented
+
+					if hasType {
+						conn.WriteError(fmt.Sprintf("ERR TYPE not supported for %s", cmd.Args[0]))
+						return
+					}
+
+					if logrus.GetLevel() == logrus.DebugLevel {
+						sb := strings.Builder{}
+						for _, arg := range cmd.Args {
+							sb.WriteString(string(arg))
+							sb.WriteString(" ")
+						}
+						logrus.Debugln(sb.String())
 					}
 
 					cursorValue, err := strconv.ParseUint(string(cmd.Args[1]), 10, 64)
@@ -155,20 +175,20 @@ var rootCmd = &cobra.Command{
 					if !has || (scan != nil && scan.offset != cursorValue) {
 						if scan != nil {
 							scan.Close()
-							scan.offset = cursorValue
 						}
 						txn := db.NewTransaction(false)
 						opts := badger.DefaultIteratorOptions
 						opts.PrefetchValues = false
 						scan = &scannerState{
-							txn: txn,
-							it:  txn.NewIterator(opts),
+							txn:    txn,
+							it:     txn.NewIterator(opts),
+							offset: cursorValue,
 						}
 
 						activeScans[conn.RemoteAddr()] = scan
 
 						scan.it.Rewind()
-						for i := uint64(0); i < uint64(badger.DefaultIteratorOptions.PrefetchSize)*cursorValue; i++ {
+						for i := uint64(0); i < cursorValue; i++ {
 							scan.it.Next()
 						}
 					}
@@ -176,9 +196,8 @@ var rootCmd = &cobra.Command{
 					keys := make([][]byte, 0)
 					for ; scan.it.Valid() && len(keys) < badger.DefaultIteratorOptions.PrefetchSize; scan.it.Next() {
 						keys = append(keys, scan.it.Item().KeyCopy(nil))
+						scan.offset++
 					}
-
-					scan.offset++
 
 					nextOffset := scan.offset
 					if !scan.it.Valid() {
@@ -234,6 +253,23 @@ var rootCmd = &cobra.Command{
 
 		return nil
 	},
+}
+
+func argsToStrings(args [][]byte) (results []string) {
+	results = make([]string, len(args))
+	for i, arg := range args {
+		results[i] = string(arg)
+	}
+	return results
+}
+
+func scanFlags(args []string, flag string) (flagValue string, flagFound bool) {
+	for i, arg := range args {
+		if strings.ToUpper(flag) == strings.ToUpper(arg) && i < len(args)-1 {
+			return args[i+1], true
+		}
+	}
+	return "", false
 }
 
 // Execute adds all child commands to the root command and sets flags appropriately.
