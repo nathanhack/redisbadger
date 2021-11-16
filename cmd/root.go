@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 	badger "github.com/dgraph-io/badger/v3"
+	"github.com/gobwas/glob"
 	homedir "github.com/mitchellh/go-homedir"
 	"github.com/nathanhack/redisbadger/commands"
 	"github.com/sirupsen/logrus"
@@ -24,6 +25,8 @@ type scannerState struct {
 	txn    *badger.Txn
 	it     *badger.Iterator
 	offset uint64
+	match  string
+	glob   glob.Glob
 }
 
 func (ss *scannerState) Close() {
@@ -148,8 +151,8 @@ var rootCmd = &cobra.Command{
 
 					argStrings := argsToStrings(cmd.Args)
 					_, hasType := scanFlags(argStrings, "TYPE")
-					//match, hasMatch := scanFlags(argStrings, "MATCH") // a future feature
-					//count, hasCount := scanFlags(argStrings, "COUNT") // not implemented
+					match, _ := scanFlags(argStrings, "MATCH") // a future feature
+					count, hasCount := scanFlags(argStrings, "COUNT")
 
 					if hasType {
 						conn.WriteError(fmt.Sprintf("ERR TYPE not supported for %s", cmd.Args[0]))
@@ -167,22 +170,54 @@ var rootCmd = &cobra.Command{
 
 					cursorValue, err := strconv.ParseUint(string(cmd.Args[1]), 10, 64)
 					if err != nil {
-						conn.WriteError(fmt.Sprintf("ERR cursor was not parsable %v", err))
+						conn.WriteError(fmt.Sprintf("ERR cursor (required >=0) was not parsable: %v", err))
 						return
 					}
+					maxCount := badger.DefaultIteratorOptions.PrefetchSize
+					if hasCount {
+						num, err := strconv.ParseInt(count, 10, 64)
+						if err != nil {
+							conn.WriteError(fmt.Sprintf("ERR COUNT value (required >=0) was not parsable: %v", err))
+							return
+						}
+						if int64(maxCount) > num {
+							maxCount = int(num)
+						}
+					}
+
 					activeScansMux.Lock()
+
 					scan, has := activeScans[conn.RemoteAddr()]
-					if !has || (scan != nil && scan.offset != cursorValue) {
+
+					if !has ||
+						(scan != nil && scan.offset != cursorValue) ||
+						(scan != nil && scan.match != match) {
+
 						if scan != nil {
 							scan.Close()
+
+							//if we switch the match then
+							// we need to restart from zero
+							if scan.match != match {
+								cursorValue = 0
+							}
 						}
 						txn := db.NewTransaction(false)
 						opts := badger.DefaultIteratorOptions
 						opts.PrefetchValues = false
+
+						pattern, err := glob.Compile(match)
+						if err != nil {
+							conn.WriteError(fmt.Sprintf("ERR MATCH string was not vaild glob syntax: %v", err))
+							return
+						}
+
 						scan = &scannerState{
 							txn:    txn,
 							it:     txn.NewIterator(opts),
 							offset: cursorValue,
+							match:  match,
+							glob:   pattern,
 						}
 
 						activeScans[conn.RemoteAddr()] = scan
@@ -194,8 +229,11 @@ var rootCmd = &cobra.Command{
 					}
 
 					keys := make([][]byte, 0)
-					for ; scan.it.Valid() && len(keys) < badger.DefaultIteratorOptions.PrefetchSize; scan.it.Next() {
-						keys = append(keys, scan.it.Item().KeyCopy(nil))
+					for ; scan.it.Valid() && len(keys) < maxCount; scan.it.Next() {
+						tmp := scan.it.Item().Key()
+						if scan.glob.Match(string(tmp)) {
+							keys = append(keys, scan.it.Item().KeyCopy(nil))
+						}
 						scan.offset++
 					}
 
