@@ -1,19 +1,22 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
 	badger "github.com/dgraph-io/badger/v3"
 	"github.com/gobwas/glob"
+	"github.com/gol4ng/signal"
 	homedir "github.com/mitchellh/go-homedir"
+	"github.com/nathanhack/redcon/v2"
 	"github.com/nathanhack/redisbadger/commands"
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
-	"github.com/tidwall/redcon"
 	"os"
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 )
 
 var cfgFile string
@@ -46,6 +49,12 @@ var rootCmd = &cobra.Command{
 	Short: "Starts up a redis compatible server backed by badger",
 	Long:  `Starts up a redis compatible server backed by badger`,
 	RunE: func(cmd *cobra.Command, args []string) error {
+		ctx, cancel := context.WithCancel(context.Background())
+		defer signal.Subscribe(func(signal os.Signal) {
+			logrus.Warnf("Ctrl-c pressed closing gracefully")
+			cancel()
+		}, os.Interrupt, syscall.SIGTERM)()
+
 		var ps redcon.PubSub
 		activeScans := map[string]*scannerState{}
 		activeScansMux := sync.Mutex{}
@@ -61,7 +70,7 @@ var rootCmd = &cobra.Command{
 			logrus.Fatal(err)
 		}
 		defer db.Close()
-		err = redcon.ListenAndServe(addr,
+		err = redcon.ListenAndServe(ctx, addr,
 			func(conn redcon.Conn, cmd redcon.Command) {
 
 				command := strings.ToUpper(string(cmd.Args[0]))
