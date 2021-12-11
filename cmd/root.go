@@ -393,7 +393,14 @@ var rootCmd = &cobra.Command{
 
 func backupRoutine(ctx context.Context, backupPathname string, backupChan chan *aof.Command) {
 	logrus.Infof("starting backup file: %v", backupPathname)
-	f, err := os.OpenFile(backupPathname, os.O_RDWR|os.O_APPEND|os.O_CREATE, 0666)
+	var f *os.File
+	_, err := os.Stat(load)
+	if errors.Is(err, os.ErrNotExist) {
+		f, err = os.OpenFile(backupPathname, os.O_RDWR|os.O_APPEND|os.O_CREATE, 0666)
+	} else {
+		f, err = os.OpenFile(backupPathname, os.O_RDWR|os.O_APPEND, 0666)
+	}
+
 	if err != nil {
 		panic(fmt.Sprintf("error while opening AOF file: %v", err))
 	}
