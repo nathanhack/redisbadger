@@ -20,7 +20,8 @@ import (
 	homedir "github.com/mitchellh/go-homedir"
 	"github.com/nathanhack/aof"
 	"github.com/nathanhack/redcon/v2"
-	"github.com/nathanhack/redisbadger/commands"
+	"github.com/nathanhack/redisbadger/command"
+	"github.com/nathanhack/redisbadger/command/commandname"
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -85,6 +86,7 @@ var rootCmd = &cobra.Command{
 			logrus.Error(err)
 			return err
 		}
+		dbMux := sync.Mutex{}
 		defer func() {
 			cancel()
 			wg.Wait()
@@ -130,12 +132,19 @@ var rootCmd = &cobra.Command{
 		aofBackupActive := false // should really be mux protected but this shouldn't be called that frequently
 		logrus.Printf("started server at %s", addr)
 		err = redcon.ListenAndServe(ctx, addr,
-			func(conn redcon.Conn, cmd redcon.Command) {
-				command := strings.ToUpper(string(cmd.Args[0]))
-				switch command {
+			func(conn redcon.Conn, redisCmd redcon.Command) {
+
+				cmd, err := command.ParseCommand(redisCmd.Args)
+				if err != nil {
+					logrus.Debugf("ParseCommand: %v", err)
+					conn.WriteError(fmt.Sprintf("ERR :%v", err))
+					return
+				}
+
+				switch cmd.Cmd {
 				default:
-					conn.WriteError("ERR unknown command '" + string(cmd.Args[0]) + "'")
-				case commands.BgRewriteAOF:
+					conn.WriteError("ERR unimplemented command '" + string(cmd.Cmd) + "'")
+				case commandname.BgRewriteAOF:
 					if aofBackupActive {
 						conn.WriteError("ERR already running")
 						return
@@ -146,32 +155,57 @@ var rootCmd = &cobra.Command{
 						aofBackupActive = false
 					}()
 					conn.WriteString("ASAP")
-				case commands.Ping:
+				case commandname.Ping:
 					//PING [message]
 					switch len(cmd.Args) {
-					case 1:
+					case 0:
 						conn.WriteString("PONG")
-					case 2:
-						conn.WriteBulk(cmd.Args[1])
+					case 1:
+						conn.WriteBulk([]byte(cmd.Args[0]))
 					default:
-						conn.WriteError(fmt.Sprintf("ERR wrong number of arguments for '%s' command", cmd.Args[0]))
+						conn.WriteError(fmt.Sprintf("ERR wrong number of arguments for '%s' command found: %v", cmd.Cmd, cmd.Args))
 					}
-				case commands.Quit:
+				case commandname.Quit:
 					//QUIT
 					conn.WriteString("OK")
 					conn.Close()
-				case commands.Set:
+				case commandname.Set:
 					//SET key value [EX seconds|PX milliseconds|EXAT timestamp|PXAT milliseconds-timestamp|KEEPTTL] [NX|XX] [GET]
-					if len(cmd.Args) != 3 {
-						conn.WriteError("ERR wrong number of arguments for '" + string(cmd.Args[0]) + "' command")
-						return
-					}
-					err := db.Update(func(txn *badger.Txn) error {
-						logrus.Debugf("SET %s %s", cmd.Args[1], cmd.Args[2])
-						err := txn.Set(cmd.Args[1], cmd.Args[2])
-						return err
-					})
 
+					//first we will go through the non supported options/flags
+					for _, k := range []string{"EX", "PX", "EXAT", "PXAT"} {
+						_, has := scanOptions(k, cmd.Options)
+						if has {
+							conn.WriteError(fmt.Sprintf("Error the option '%v' is not implemented for command '%v'", k, cmd.Cmd))
+							return
+						}
+					}
+
+					for _, k := range []string{"KEEPTTL", "NX", "XX"} {
+						if scanFlags(k, cmd.Options) {
+							conn.WriteError(fmt.Sprintf("Error the option flagn '%v' is not implemented for command '%v'", k, cmd.Cmd))
+							return
+						}
+					}
+
+					_, hasGet := scanOptions("GET", cmd.Options)
+					dbMux.Lock()
+					var valCopy []byte
+					err := db.Update(func(txn *badger.Txn) error {
+						logrus.Debugf("cmd: %#v", cmd)
+						if hasGet {
+							item, err := txn.Get([]byte(cmd.Args[0]))
+							if err == nil {
+								valCopy, err = item.ValueCopy(nil)
+								if err != nil {
+									return err
+								}
+							}
+						}
+
+						return txn.Set([]byte(cmd.Args[0]), []byte(cmd.Args[1]))
+					})
+					dbMux.Unlock()
 					if err != nil {
 						logrus.Error(err)
 						conn.WriteError(fmt.Sprintf("Error %v", err))
@@ -180,23 +214,25 @@ var rootCmd = &cobra.Command{
 
 					if backup {
 						backupChan <- &aof.Command{
-							Name:      commands.Set,
-							Arguments: []string{string(cmd.Args[1]), string(cmd.Args[2])},
+							Name:      string(commandname.Set),
+							Arguments: cmd.Args,
 						}
 					}
-					conn.WriteString("OK")
 
-				case commands.Get:
-					//GET key
-					if len(cmd.Args) != 2 {
-						conn.WriteError("ERR wrong number of arguments for '" + string(cmd.Args[0]) + "' command")
-						return
+					if hasGet {
+						if valCopy == nil {
+							conn.WriteNull()
+						} else {
+							conn.WriteBulk(valCopy)
+						}
+					} else {
+						conn.WriteString("OK")
 					}
-
-					key := cmd.Args[1]
+				case commandname.Get:
+					//GET key
 					var valCopy []byte
 					err := db.View(func(txn *badger.Txn) error {
-						item, err := txn.Get(key)
+						item, err := txn.Get([]byte(cmd.Args[0]))
 						if err == nil {
 							valCopy, err = item.ValueCopy(nil)
 						}
@@ -209,58 +245,45 @@ var rootCmd = &cobra.Command{
 						conn.WriteBulk(valCopy)
 					}
 
-				case commands.Del:
+				case commandname.Del:
 					//DEL key [key ...]
-					if len(cmd.Args) < 2 {
-						conn.WriteError("ERR wrong number of arguments for '" + string(cmd.Args[0]) + "' command")
-						return
-					}
-
 					deleted := 0
-					for _, key := range cmd.Args[1:] {
+					for _, key := range cmd.Args {
+						dbMux.Lock()
 						err := db.Update(func(txn *badger.Txn) error {
-							return txn.Delete(key)
+							return txn.Delete([]byte(key))
 						})
+						dbMux.Unlock()
 						if err == nil {
 							deleted++
 						}
+
 						if backup {
 							backupChan <- &aof.Command{
-								Name:      commands.Del,
-								Arguments: []string{string(key)},
+								Name:      string(commandname.Del),
+								Arguments: []string{key},
 							}
 						}
 					}
 					conn.WriteInt(deleted)
 
-				case commands.Scan:
+				case commandname.Scan:
 					//SCAN cursor [MATCH pattern] [COUNT count] [TYPE type]
 
-					if len(cmd.Args) < 2 || 8 < len(cmd.Args) {
-						conn.WriteError("ERR wrong number of arguments for '" + string(cmd.Args[0]) + "' command")
-						return
-					}
-
-					argStrings := argsToStrings(cmd.Args)
-					_, hasType := scanFlags(argStrings, "TYPE")
-					match, hasMatch := scanFlags(argStrings, "MATCH")
-					count, hasCount := scanFlags(argStrings, "COUNT")
-
+					_, hasType := scanOptions("TYPE", cmd.Options)
 					if hasType {
-						conn.WriteError(fmt.Sprintf("ERR TYPE not supported for %s", cmd.Args[0]))
+						conn.WriteError(fmt.Sprintf("ERR TYPE not supported for %s", cmd.Cmd))
 						return
 					}
+
+					match, hasMatch := scanOptions("MATCH", cmd.Options)
+					count, hasCount := scanOptions("COUNT", cmd.Options)
 
 					if logrus.GetLevel() == logrus.DebugLevel {
-						sb := strings.Builder{}
-						for _, arg := range cmd.Args {
-							sb.WriteString(string(arg))
-							sb.WriteString(" ")
-						}
-						logrus.Debugln(sb.String())
+						logrus.Debugln(strings.Join(cmd.Args, " "))
 					}
 
-					cursorValue, err := strconv.ParseUint(string(cmd.Args[1]), 10, 64)
+					cursorValue, err := strconv.ParseUint(string(cmd.Args[0]), 10, 64)
 					if err != nil {
 						conn.WriteError(fmt.Sprintf("ERR cursor (required >=0) was not parsable: %v", err))
 						return
@@ -273,13 +296,13 @@ var rootCmd = &cobra.Command{
 
 					maxCount := badger.DefaultIteratorOptions.PrefetchSize
 					if hasCount {
-						num, err := strconv.ParseInt(count, 10, 64)
+						num, err := strconv.Atoi(count)
 						if err != nil {
 							conn.WriteError(fmt.Sprintf("ERR COUNT value (required >=0) was not parsable: %v", err))
 							return
 						}
-						if int64(maxCount) > num {
-							maxCount = int(num)
+						if maxCount > num {
+							maxCount = num
 						}
 					}
 
@@ -307,6 +330,7 @@ var rootCmd = &cobra.Command{
 						pattern, err := glob.Compile(match)
 						if err != nil {
 							conn.WriteError(fmt.Sprintf("ERR MATCH string was not vaild glob syntax: %v", err))
+							activeScansMux.Unlock()
 							return
 						}
 
@@ -352,30 +376,20 @@ var rootCmd = &cobra.Command{
 					for _, key := range keys {
 						conn.WriteBulkString(string(key))
 					}
-				case commands.Publish:
-					if len(cmd.Args) != 3 {
-						conn.WriteError("ERR wrong number of arguments for '" + string(cmd.Args[0]) + "' command")
-						return
-					}
-					conn.WriteInt(ps.Publish(string(cmd.Args[1]), string(cmd.Args[2])))
-				case commands.Subscribe, commands.PSubscribe:
-					if len(cmd.Args) < 2 {
-						conn.WriteError("ERR wrong number of arguments for '" + string(cmd.Args[0]) + "' command")
-						return
-					}
-
-					for i := 1; i < len(cmd.Args); i++ {
-						if command == commands.PSubscribe {
-							ps.Psubscribe(conn, string(cmd.Args[i]))
+				case commandname.Publish:
+					conn.WriteInt(ps.Publish(string(cmd.Args[0]), string(cmd.Args[1])))
+				case commandname.Subscribe, commandname.PSubscribe:
+					for _, arg := range cmd.Args {
+						if cmd.Cmd == commandname.PSubscribe {
+							ps.Psubscribe(conn, arg)
 						} else {
-							ps.Subscribe(conn, string(cmd.Args[i]))
+							ps.Subscribe(conn, arg)
 						}
 					}
 				}
 			},
 			func(conn redcon.Conn) bool {
 				// Use this function to accept or deny the connection.
-				// log.Printf("accept: %s", conn.RemoteAddr())
 				return true
 			},
 			func(conn redcon.Conn, err error) {
@@ -474,14 +488,14 @@ func aofLoad(ctx context.Context, aofFilepath string, db *badger.DB) error {
 		}
 
 		//if we're not a Set or Del we skip
-		if command.Name != commands.Set && command.Name != commands.Del {
+		if !strings.EqualFold(command.Name, string(commandname.Set)) && !strings.EqualFold(command.Name, string(commandname.Del)) {
 			continue
 		}
 
 		err := db.Update(func(txn *badger.Txn) error {
 			_, err := txn.Get([]byte(command.Arguments[0]))
 			if errors.Is(err, badger.ErrKeyNotFound) {
-				if command.Name == commands.Set {
+				if strings.EqualFold(command.Name, string(commandname.Set)) {
 					added++
 				} else {
 					return nil
@@ -490,7 +504,7 @@ func aofLoad(ctx context.Context, aofFilepath string, db *badger.DB) error {
 
 			//older commands should be applied
 			// so we run anyway
-			if command.Name == commands.Set {
+			if strings.EqualFold(command.Name, string(commandname.Set)) {
 				return txn.Set([]byte(command.Arguments[0]), []byte(command.Arguments[1]))
 			}
 
@@ -509,14 +523,14 @@ func aofLoad(ctx context.Context, aofFilepath string, db *badger.DB) error {
 				continue
 			}
 
-			if command.Name == commands.Set {
+			if strings.EqualFold(command.Name, string(commandname.Set)) {
 				backupChan <- &aof.Command{
-					Name:      commands.Set,
+					Name:      string(commandname.Set),
 					Arguments: []string{string(command.Arguments[0]), string(command.Arguments[1])},
 				}
 			} else {
 				backupChan <- &aof.Command{
-					Name:      commands.Del,
+					Name:      string(commandname.Del),
 					Arguments: []string{string(command.Arguments[0])},
 				}
 			}
@@ -564,7 +578,7 @@ func aofBackup(ctx context.Context, aofFilepath string, db *badger.DB) error {
 				return fmt.Errorf("error while getting value for key(%v) :%v", string(it.Item().Key()), err)
 			}
 			opt := &aof.Command{
-				Name:      commands.Set,
+				Name:      string(commandname.Set),
 				Arguments: []string{string(it.Item().KeyCopy(nil)), string(value)},
 			}
 
@@ -586,21 +600,22 @@ func aofBackup(ctx context.Context, aofFilepath string, db *badger.DB) error {
 	return f.Sync()
 }
 
-func argsToStrings(args [][]byte) (results []string) {
-	results = make([]string, len(args))
-	for i, arg := range args {
-		results[i] = string(arg)
-	}
-	return results
-}
-
-func scanFlags(args []string, flag string) (flagValue string, flagFound bool) {
-	for i, arg := range args {
-		if strings.ToUpper(flag) == strings.ToUpper(arg) && i < len(args)-1 {
-			return args[i+1], true
+func scanOptions(target string, options []command.Option) (optionValue string, found bool) {
+	for _, o := range options {
+		if strings.EqualFold(target, o.Name) {
+			return o.Value, true
 		}
 	}
 	return "", false
+}
+
+func scanFlags(target string, options []command.Option) (found bool) {
+	for _, o := range options {
+		if strings.EqualFold(target, o.Name) {
+			return true
+		}
+	}
+	return false
 }
 
 // Execute adds all child commands to the root command and sets flags appropriately.
