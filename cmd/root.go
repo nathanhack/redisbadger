@@ -39,11 +39,14 @@ var backupChan chan *aof.Command
 var backupPathname string
 
 type scannerState struct {
-	txn    *badger.Txn
-	it     *badger.Iterator
-	offset uint64
-	match  string
-	glob   glob.Glob
+	txn       *badger.Txn
+	it        *badger.Iterator
+	offset    uint64
+	match     string
+	glob      glob.Glob
+	mux       sync.Mutex
+	ctx       context.Context
+	ctxCancel context.CancelFunc
 }
 
 func (ss *scannerState) Close() {
@@ -307,8 +310,8 @@ var rootCmd = &cobra.Command{
 					}
 
 					activeScansMux.Lock()
-
 					scan, has := activeScans[conn.RemoteAddr()]
+					activeScansMux.Unlock()
 
 					if !has ||
 						(scan != nil && scan.offset != cursorValue) ||
@@ -340,15 +343,31 @@ var rootCmd = &cobra.Command{
 							offset: cursorValue,
 							match:  match,
 							glob:   pattern,
+							mux:    sync.Mutex{},
 						}
 
+						scan.ctx, scan.ctxCancel = context.WithCancel(context.Background())
+
+						activeScansMux.Lock()
 						activeScans[conn.RemoteAddr()] = scan
+						activeScansMux.Unlock()
 
 						scan.it.Rewind()
 						for i := uint64(0); i < cursorValue; i++ {
 							scan.it.Next()
+
+							// this loop could take a while we need to check the context
+							select {
+							case <-ctx.Done():
+								return
+							case <-scan.ctx.Done():
+								return
+							default:
+							}
 						}
 					}
+
+					scan.mux.Lock()
 
 					keys := make([][]byte, 0)
 					for ; scan.it.Valid() && len(keys) < maxCount; scan.it.Next() {
@@ -357,17 +376,27 @@ var rootCmd = &cobra.Command{
 							keys = append(keys, scan.it.Item().KeyCopy(nil))
 						}
 						scan.offset++
+
+						// this loop could take a while we need to check the context
+						select {
+						case <-ctx.Done():
+							return
+						case <-scan.ctx.Done():
+							return
+						default:
+						}
 					}
 
 					nextOffset := scan.offset
 					if !scan.it.Valid() {
 						//clean up since we made it to the end
 						scan.Close()
+						activeScansMux.Lock()
 						delete(activeScans, conn.RemoteAddr())
+						activeScansMux.Unlock()
 						nextOffset = 0
 					}
-
-					activeScansMux.Unlock()
+					scan.mux.Unlock()
 
 					//well now we have data or possibly not, in either case we write it out
 					conn.WriteArray(2)
@@ -395,6 +424,13 @@ var rootCmd = &cobra.Command{
 			func(conn redcon.Conn, err error) {
 				// This is called when the connection has been closed
 				logrus.Printf("closed: %s, err: %v", conn.RemoteAddr(), err)
+				activeScansMux.Lock()
+				scan, has := activeScans[conn.RemoteAddr()]
+				activeScansMux.Unlock()
+				if has {
+					scan.ctxCancel()
+					logrus.Infof("active scan canceled")
+				}
 			},
 		)
 		if err != nil {
