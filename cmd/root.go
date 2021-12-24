@@ -336,7 +336,6 @@ var rootCmd = &cobra.Command{
 						pattern, err := glob.Compile(match)
 						if err != nil {
 							conn.WriteError(fmt.Sprintf("ERR MATCH string was not vaild glob syntax: %v", err))
-							activeScansMux.Unlock()
 							return
 						}
 
@@ -665,12 +664,13 @@ func Execute() {
 func init() {
 	cobra.OnInitialize(initConfig)
 
-	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default is $HOME/.redisbadger.yaml)")
-	rootCmd.PersistentFlags().StringVar(&addr, "address", ":6379", "the address and port to listen for redis commands")
-	rootCmd.PersistentFlags().StringVar(&databasePathname, "database", "./badger", "the directory that will store the badger database")
+	rootCmd.Flags().StringVar(&cfgFile, "config", "", "config file (default is $HOME/.redisbadger.yaml)")
+	rootCmd.Flags().StringVar(&addr, "address", ":6379", "the address and port to listen for redis commands")
+	rootCmd.Flags().StringVar(&databasePathname, "database", "./badger", "the directory that will store the badger database")
+	rootCmd.Flags().BoolVar(&backup, "backup", false, "enables an AOF backup file in the database directory")
+	rootCmd.Flags().StringVar(&load, "load", "", "before starting the server load this specific AOF")
+
 	rootCmd.PersistentFlags().BoolVar(&debug, "debug", false, "enables debug logging")
-	rootCmd.PersistentFlags().BoolVar(&backup, "backup", false, "enables an AOF backup file in the database directory")
-	rootCmd.PersistentFlags().StringVar(&load, "load", "", "before starting the server load this specific AOF")
 }
 
 // initConfig reads in config file and ENV variables if set.
