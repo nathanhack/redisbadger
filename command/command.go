@@ -158,7 +158,7 @@ func ParseCommand(tokens [][]byte) (*Command, error) {
 	var argCount int
 	switch name {
 	case commandname.BgRewriteAOF:
-		argCount = 1
+		argCount = 0
 	case commandname.Get:
 		argCount = 1
 	case commandname.Del:
