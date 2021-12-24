@@ -102,14 +102,17 @@ var rootCmd = &cobra.Command{
 			logrus.Error(err)
 			return err
 		}
-		backupChan = make(chan *aof.Command, 100)
-		defer close(backupChan)
 
-		wg.Add(1)
-		go func() {
-			backupRoutine(ctx, backupPathname, backupChan)
-			wg.Done()
-		}()
+		if backup {
+			backupChan = make(chan *aof.Command, 100)
+			defer close(backupChan)
+
+			wg.Add(1)
+			go func() {
+				backupRoutine(ctx, backupPathname, backupChan)
+				wg.Done()
+			}()
+		}
 
 		if load != "" {
 			if _, err := os.Stat(load); errors.Is(err, os.ErrNotExist) {
