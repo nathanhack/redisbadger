@@ -18,15 +18,17 @@ func TestParseCommand(t *testing.T) {
 		want    *Command
 		wantErr bool
 	}{
-		0: {args: args{bytes.Split([]byte("Set Yes there"), []byte{' '})}, want: &Command{Cmd: commandname.Set, Args: []string{"Yes", "there"}, Options: []Option{}}, wantErr: false},
-		1: {args: args{bytes.Split([]byte("Set Yes there GET"), []byte{' '})}, want: &Command{Cmd: commandname.Set, Args: []string{"Yes", "there"}, Options: []Option{{Flag: true, Name: "GET", Value: ""}}}, wantErr: false},
-		2: {args: args{bytes.Split([]byte("Set Yes there bob"), []byte{' '})}, want: nil, wantErr: true},
-		3: {args: args{bytes.Split([]byte("Set Yes there EX"), []byte{' '})}, want: nil, wantErr: true},
-		4: {args: args{bytes.Split([]byte("Set Yes"), []byte{' '})}, want: nil, wantErr: true},
-		5: {args: args{bytes.Split([]byte("Set Yes there EX 1"), []byte{' '})}, want: &Command{Cmd: commandname.Set, Args: []string{"Yes", "there"}, Options: []Option{{Flag: false, Name: "EX", Value: "1"}}}, wantErr: false},
-		6: {args: args{bytes.Split([]byte("Set Yes there EX 1 GET"), []byte{' '})}, want: &Command{Cmd: commandname.Set, Args: []string{"Yes", "there"}, Options: []Option{{Flag: false, Name: "EX", Value: "1"}, {Flag: true, Name: "GET"}}}, wantErr: false},
-		7: {args: args{bytes.Split([]byte("Ping"), []byte{' '})}, want: &Command{Cmd: commandname.Ping, Args: []string{}, Options: []Option{}}, wantErr: false},
-		8: {args: args{bytes.Split([]byte("Ping"), []byte{' '})}, want: &Command{Cmd: commandname.Ping, Args: []string{}, Options: []Option{}}, wantErr: false},
+		0:  {args: args{bytes.Split([]byte("Set Yes there"), []byte{' '})}, want: &Command{Cmd: commandname.Set, Args: []string{"Yes", "there"}, Options: []Option{}}, wantErr: false},
+		1:  {args: args{bytes.Split([]byte("Set Yes there GET"), []byte{' '})}, want: &Command{Cmd: commandname.Set, Args: []string{"Yes", "there"}, Options: []Option{{Flag: true, Name: "GET", Value: ""}}}, wantErr: false},
+		2:  {args: args{bytes.Split([]byte("Set Yes there bob"), []byte{' '})}, want: nil, wantErr: true},
+		3:  {args: args{bytes.Split([]byte("Set Yes there EX"), []byte{' '})}, want: nil, wantErr: true},
+		4:  {args: args{bytes.Split([]byte("Set Yes"), []byte{' '})}, want: nil, wantErr: true},
+		5:  {args: args{bytes.Split([]byte("Set Yes there EX 1"), []byte{' '})}, want: &Command{Cmd: commandname.Set, Args: []string{"Yes", "there"}, Options: []Option{{Flag: false, Name: "EX", Value: "1"}}}, wantErr: false},
+		6:  {args: args{bytes.Split([]byte("Set Yes there EX 1 GET"), []byte{' '})}, want: &Command{Cmd: commandname.Set, Args: []string{"Yes", "there"}, Options: []Option{{Flag: false, Name: "EX", Value: "1"}, {Flag: true, Name: "GET"}}}, wantErr: false},
+		7:  {args: args{bytes.Split([]byte("Ping"), []byte{' '})}, want: &Command{Cmd: commandname.Ping, Args: []string{}, Options: []Option{}}, wantErr: false},
+		8:  {args: args{bytes.Split([]byte("Ping name"), []byte{' '})}, want: &Command{Cmd: commandname.Ping, Args: []string{"name"}, Options: []Option{}}, wantErr: false},
+		9:  {args: args{bytes.Split([]byte("DEL k"), []byte{' '})}, want: &Command{Cmd: commandname.Del, Args: []string{"k"}, Options: []Option{}}, wantErr: false},
+		10: {args: args{bytes.Split([]byte("DEL k1 k2"), []byte{' '})}, want: &Command{Cmd: commandname.Del, Args: []string{"k1", "k2"}, Options: []Option{}}, wantErr: false},
 	}
 	for ii, tt := range tests {
 		t.Run(strconv.Itoa(ii), func(t *testing.T) {

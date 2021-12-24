@@ -9,6 +9,12 @@ import (
 	"github.com/nathanhack/redisbadger/command/options"
 )
 
+const (
+	ZeroToOne  = -1
+	ZeroToMany = -2
+	OneToMany  = -3
+)
+
 type Option struct {
 	Flag  bool
 	Name  string
@@ -42,9 +48,22 @@ func (c Command) String() string {
 func extractArgs(argCount int, tokens [][]byte) ([][]byte, error) {
 	//we only support one set of args if options are avaliable
 
-	if argCount == -1 {
+	switch argCount {
+	case ZeroToOne:
+		if len(tokens) > 1 {
+			return nil, fmt.Errorf("expected at most one arg found %v", len(tokens))
+		}
+		return tokens, nil
+	case ZeroToMany:
+		return tokens, nil
+	case OneToMany:
+		if len(tokens) < 1 {
+			return nil, fmt.Errorf("expected at least one arg")
+		}
+
 		//variadic so the rest are args
 		return tokens, nil
+	default:
 	}
 
 	if len(tokens) > argCount {
@@ -143,9 +162,9 @@ func ParseCommand(tokens [][]byte) (*Command, error) {
 	case commandname.Get:
 		argCount = 1
 	case commandname.Del:
-		argCount = 1
+		argCount = OneToMany
 	case commandname.Ping:
-		argCount = -1
+		argCount = ZeroToOne
 	case commandname.Publish:
 		argCount = 2
 	case commandname.Quit:
@@ -155,9 +174,9 @@ func ParseCommand(tokens [][]byte) (*Command, error) {
 	case commandname.Set:
 		argCount = 2
 	case commandname.Subscribe:
-		argCount = -1
+		argCount = OneToMany
 	case commandname.PSubscribe:
-		argCount = -1
+		argCount = OneToMany
 	default:
 		return nil, fmt.Errorf("unimplemented command %v", name)
 	}
