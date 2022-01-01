@@ -34,7 +34,7 @@ var addr string
 var databasePathname string
 var debug bool
 var backup bool
-var load string
+var loads []string
 var backupChan chan *aof.Command
 var backupPathname string
 
@@ -89,6 +89,29 @@ var rootCmd = &cobra.Command{
 			logrus.Error(err)
 			return err
 		}
+
+		//now that we have the db we'll add in the a thread to GC so files don't run amok
+		go func() {
+			logrus.Infof("Starting background Garbage Collection thread")
+			ticker := time.NewTicker(5 * time.Minute)
+			defer ticker.Stop()
+
+			for {
+				select {
+				case <-ticker.C:
+				again:
+					err := db.RunValueLogGC(0.7)
+					if err == nil {
+						goto again
+					}
+					logrus.Infof("Garbage Collection - Occurred")
+				case <-ctx.Done():
+					logrus.Info("Garbage Collection thread exited")
+					return
+				}
+			}
+		}()
+
 		dbMux := sync.Mutex{}
 		defer func() {
 			cancel()
@@ -114,7 +137,7 @@ var rootCmd = &cobra.Command{
 			}()
 		}
 
-		if load != "" {
+		for _, load := range loads {
 			if _, err := os.Stat(load); errors.Is(err, os.ErrNotExist) {
 				err = fmt.Errorf("load file does not exist: %v", err)
 				logrus.Error(err)
@@ -446,14 +469,8 @@ var rootCmd = &cobra.Command{
 
 func backupRoutine(ctx context.Context, backupPathname string, backupChan chan *aof.Command) {
 	logrus.Infof("starting backup file: %v", backupPathname)
-	var f *os.File
-	_, err := os.Stat(load)
-	if errors.Is(err, os.ErrNotExist) {
-		f, err = os.OpenFile(backupPathname, os.O_RDWR|os.O_APPEND|os.O_CREATE, 0666)
-	} else {
-		f, err = os.OpenFile(backupPathname, os.O_RDWR|os.O_APPEND, 0666)
-	}
 
+	f, err := os.OpenFile(backupPathname, os.O_RDWR|os.O_APPEND|os.O_CREATE, 0666)
 	if err != nil {
 		panic(fmt.Sprintf("error while opening AOF file: %v", err))
 	}
@@ -575,7 +592,7 @@ func aofLoad(ctx context.Context, aofFilepath string, db *badger.DB) error {
 			}
 		}
 	}
-	logrus.Infof("finished loading %v command (keys added %v, removed %v) items from %v", count, added, removed, load)
+	logrus.Infof("finished loading %v command (keys added %v, removed %v) items from %v", count, added, removed, aofFilepath)
 
 	return nil
 }
@@ -669,7 +686,7 @@ func init() {
 	rootCmd.Flags().StringVar(&addr, "address", ":6379", "the address and port to listen for redis commands")
 	rootCmd.Flags().StringVar(&databasePathname, "database", "./badger", "the directory that will store the badger database")
 	rootCmd.Flags().BoolVar(&backup, "backup", false, "enables an AOF backup file in the database directory")
-	rootCmd.Flags().StringVar(&load, "load", "", "before starting the server load this specific AOF")
+	rootCmd.Flags().StringSliceVar(&loads, "load", []string{}, "before starting the server load these specific AOFs")
 
 	rootCmd.PersistentFlags().BoolVar(&debug, "debug", false, "enables debug logging")
 }
