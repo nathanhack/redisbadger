@@ -177,8 +177,10 @@ func ParseCommand(tokens [][]byte) (*Command, error) {
 		argCount = OneToMany
 	case commandname.PSubscribe:
 		argCount = OneToMany
+	case commandname.Exists:
+		argCount = OneToMany
 	default:
-		return nil, fmt.Errorf("unimplemented command %v", name)
+		return nil, fmt.Errorf("unimplemented command '%v'", name)
 	}
 
 	options, tokens, err := extractOptions(OptionGroups[name], tokens)

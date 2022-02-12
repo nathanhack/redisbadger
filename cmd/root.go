@@ -165,13 +165,14 @@ var rootCmd = &cobra.Command{
 
 				cmd, err := command.ParseCommand(redisCmd.Args)
 				if err != nil {
-					logrus.Debugf("ParseCommand: %v", err)
+					logrus.Warnf("ParseCommand: %v", err)
 					conn.WriteError(fmt.Sprintf("ERR :%v", err))
 					return
 				}
 
 				switch cmd.Cmd {
 				default:
+					logrus.Errorf("ERR unimplemented command '%v'", string(cmd.Cmd))
 					conn.WriteError("ERR unimplemented command '" + string(cmd.Cmd) + "'")
 				case commandname.BgRewriteAOF:
 					if aofBackupActive {
@@ -273,7 +274,20 @@ var rootCmd = &cobra.Command{
 					} else {
 						conn.WriteBulk(valCopy)
 					}
+				case commandname.Exists:
+					//Exists key
+					counts := 0
+					for _, key := range cmd.Args {
+						db.View(func(txn *badger.Txn) error {
+							_, err := txn.Get([]byte(key))
+							if err == nil {
+								counts++
+							}
+							return nil
+						})
+					}
 
+					conn.WriteInt(counts)
 				case commandname.Del:
 					//DEL key [key ...]
 					deleted := 0
