@@ -14,7 +14,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/dgraph-io/badger/v3"
+	"github.com/dgraph-io/badger/v4"
 	"github.com/gobwas/glob"
 	"github.com/gol4ng/signal"
 	homedir "github.com/mitchellh/go-homedir"
