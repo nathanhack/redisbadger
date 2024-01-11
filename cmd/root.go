@@ -373,7 +373,7 @@ var rootCmd = &cobra.Command{
 						pattern, err := glob.Compile(match)
 						if err != nil {
 							logrus.Debugf("command:SCAN: glob.Compile('%v') -> %v", match, err)
-							conn.WriteError(fmt.Sprintf("ERR MATCH string was not vaild glob syntax: %v", err))
+							conn.WriteError(fmt.Sprintf("ERR MATCH string was not valid glob syntax: %v", err))
 							return
 						}
 

@@ -17,7 +17,7 @@ var splitCmd = &cobra.Command{
 	Short: "Takes an AOF file and splits it into two files: good and bad.",
 	Long: `Takes an AOF file and outputs two files 
 (APPENDONLY.AOF.good and APPENDONLY.AOF.bad), one containing valid 
-commands and the other the bytes from that did not contain a command. 
+commands and the other the bytes from the file that did not contain a command. 
 A special note, commands are simple and may contain bad data as 
 validation on the Key and Value must be done by the user some other way.`,
 	Args: cobra.ExactArgs(1),
@@ -32,14 +32,14 @@ validation on the Key and Value must be done by the user some other way.`,
 		fixedPathname := args[0] + ".fixed"
 		goodFile, err := os.Create(fixedPathname)
 		if err != nil {
-			logrus.Errorf("output file %v must NOT already exists: %v", err)
+			logrus.Errorf("output file %v must NOT already exists: %v", fixedPathname, err)
 			return err
 		}
 
 		badPathname := args[0] + ".bad"
 		badFile, err := os.Create(badPathname)
 		if err != nil {
-			logrus.Errorf("output file %v must NOT already exists: %v", err)
+			logrus.Errorf("output file %v must NOT already exists: %v", badPathname, err)
 			return err
 		}
 
