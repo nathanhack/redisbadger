@@ -213,7 +213,7 @@ var rootCmd = &cobra.Command{
 
 					for _, k := range []string{"KEEPTTL", "NX", "XX"} {
 						if scanFlags(k, cmd.Options) {
-							conn.WriteError(fmt.Sprintf("Error the option flagn '%v' is not implemented for command '%v'", k, cmd.Cmd))
+							conn.WriteError(fmt.Sprintf("Error the option flag '%v' is not implemented for command '%v'", k, cmd.Cmd))
 							return
 						}
 					}
