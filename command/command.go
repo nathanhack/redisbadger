@@ -159,10 +159,14 @@ func ParseCommand(tokens [][]byte) (*Command, error) {
 	switch name {
 	case commandname.BgRewriteAOF:
 		argCount = 0
-	case commandname.Get:
-		argCount = 1
+	case commandname.DbSize:
+		argCount = 0
 	case commandname.Del:
 		argCount = OneToMany
+	case commandname.Exists:
+		argCount = OneToMany
+	case commandname.Get:
+		argCount = 1
 	case commandname.Ping:
 		argCount = ZeroToOne
 	case commandname.Publish:
@@ -176,8 +180,6 @@ func ParseCommand(tokens [][]byte) (*Command, error) {
 	case commandname.Subscribe:
 		argCount = OneToMany
 	case commandname.PSubscribe:
-		argCount = OneToMany
-	case commandname.Exists:
 		argCount = OneToMany
 	default:
 		return nil, fmt.Errorf("unimplemented command '%v'", name)

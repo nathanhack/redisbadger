@@ -172,7 +172,7 @@ var rootCmd = &cobra.Command{
 
 				switch cmd.Cmd {
 				default:
-					logrus.Errorf("ERR unimplemented command '%v'", string(cmd.Cmd))
+					logrus.Errorf("unimplemented command '%v' vs '%v'", string(cmd.Cmd), string(commandname.DbSize))
 					conn.WriteError("ERR unimplemented command '" + string(cmd.Cmd) + "'")
 				case commandname.BgRewriteAOF:
 					if aofBackupActive {
