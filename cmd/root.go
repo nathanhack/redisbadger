@@ -185,109 +185,24 @@ var rootCmd = &cobra.Command{
 						aofBackupActive = false
 					}()
 					conn.WriteString("ASAP")
-				case commandname.Ping:
-					//PING [message]
-					switch len(cmd.Args) {
-					case 0:
-						conn.WriteString("PONG")
-					case 1:
-						conn.WriteBulk([]byte(cmd.Args[0]))
-					default:
-						conn.WriteError(fmt.Sprintf("ERR wrong number of arguments for '%s' command found: %v", cmd.Cmd, cmd.Args))
-					}
-				case commandname.Quit:
-					//QUIT
-					conn.WriteString("OK")
-					conn.Close()
-				case commandname.Set:
-					//SET key value [EX seconds|PX milliseconds|EXAT timestamp|PXAT milliseconds-timestamp|KEEPTTL] [NX|XX] [GET]
-
-					//first we will go through the non supported options/flags
-					for _, k := range []string{"EX", "PX", "EXAT", "PXAT"} {
-						_, has := scanOptions(k, cmd.Options)
-						if has {
-							conn.WriteError(fmt.Sprintf("Error the option '%v' is not implemented for command '%v'", k, cmd.Cmd))
+				case commandname.DbSize:
+					// DBSIZE
+					txn := db.NewTransaction(false)
+					opts := badger.DefaultIteratorOptions
+					opts.PrefetchValues = false
+					it := txn.NewIterator(opts)
+					defer it.Close()
+					count := int64(0)
+					for it.Rewind(); it.Valid(); it.Next() {
+						count++
+						// this loop could take a while we need to check the context
+						select {
+						case <-ctx.Done():
 							return
+						default:
 						}
 					}
-
-					for _, k := range []string{"KEEPTTL", "NX", "XX"} {
-						if scanFlags(k, cmd.Options) {
-							conn.WriteError(fmt.Sprintf("Error the option flag '%v' is not implemented for command '%v'", k, cmd.Cmd))
-							return
-						}
-					}
-
-					_, hasGet := scanOptions("GET", cmd.Options)
-					dbMux.Lock()
-					var valCopy []byte
-					err := db.Update(func(txn *badger.Txn) error {
-						logrus.Debugf("cmd: %#v", cmd)
-						if hasGet {
-							item, err := txn.Get([]byte(cmd.Args[0]))
-							if err == nil {
-								valCopy, err = item.ValueCopy(nil)
-								if err != nil {
-									return err
-								}
-							}
-						}
-
-						return txn.Set([]byte(cmd.Args[0]), []byte(cmd.Args[1]))
-					})
-					dbMux.Unlock()
-					if err != nil {
-						logrus.Error(err)
-						conn.WriteError(fmt.Sprintf("Error %v", err))
-						return
-					}
-
-					if backup {
-						backupChan <- &aof.Command{
-							Name:      string(commandname.Set),
-							Arguments: cmd.Args,
-						}
-					}
-
-					if hasGet {
-						if valCopy == nil {
-							conn.WriteNull()
-						} else {
-							conn.WriteBulk(valCopy)
-						}
-					} else {
-						conn.WriteString("OK")
-					}
-				case commandname.Get:
-					//GET key
-					var valCopy []byte
-					err := db.View(func(txn *badger.Txn) error {
-						item, err := txn.Get([]byte(cmd.Args[0]))
-						if err == nil {
-							valCopy, err = item.ValueCopy(nil)
-						}
-						return err
-					})
-
-					if err != nil {
-						conn.WriteNull()
-					} else {
-						conn.WriteBulk(valCopy)
-					}
-				case commandname.Exists:
-					//Exists key
-					counts := 0
-					for _, key := range cmd.Args {
-						db.View(func(txn *badger.Txn) error {
-							_, err := txn.Get([]byte(key))
-							if err == nil {
-								counts++
-							}
-							return nil
-						})
-					}
-
-					conn.WriteInt(counts)
+					conn.WriteInt64(count)
 				case commandname.Del:
 					//DEL key [key ...]
 					deleted := 0
@@ -309,7 +224,52 @@ var rootCmd = &cobra.Command{
 						}
 					}
 					conn.WriteInt(deleted)
+				case commandname.Exists:
+					//Exists key
+					counts := 0
+					for _, key := range cmd.Args {
+						db.View(func(txn *badger.Txn) error {
+							_, err := txn.Get([]byte(key))
+							if err == nil {
+								counts++
+							}
+							return nil
+						})
+					}
 
+					conn.WriteInt(counts)
+				case commandname.Get:
+					//GET key
+					var valCopy []byte
+					err := db.View(func(txn *badger.Txn) error {
+						item, err := txn.Get([]byte(cmd.Args[0]))
+						if err == nil {
+							valCopy, err = item.ValueCopy(nil)
+						}
+						return err
+					})
+
+					if err != nil {
+						conn.WriteNull()
+					} else {
+						conn.WriteBulk(valCopy)
+					}
+				case commandname.Ping:
+					//PING [message]
+					switch len(cmd.Args) {
+					case 0:
+						conn.WriteString("PONG")
+					case 1:
+						conn.WriteBulk([]byte(cmd.Args[0]))
+					default:
+						conn.WriteError(fmt.Sprintf("ERR wrong number of arguments for '%s' command found: %v", cmd.Cmd, cmd.Args))
+					}
+				case commandname.Publish:
+					conn.WriteInt(ps.Publish(string(cmd.Args[0]), string(cmd.Args[1])))
+				case commandname.Quit:
+					//QUIT
+					conn.WriteString("OK")
+					conn.Close()
 				case commandname.Scan:
 					//SCAN cursor [MATCH pattern] [COUNT count] [TYPE type]
 
@@ -445,8 +405,65 @@ var rootCmd = &cobra.Command{
 					for _, key := range keys {
 						conn.WriteBulkString(string(key))
 					}
-				case commandname.Publish:
-					conn.WriteInt(ps.Publish(string(cmd.Args[0]), string(cmd.Args[1])))
+				case commandname.Set:
+					//SET key value [EX seconds|PX milliseconds|EXAT timestamp|PXAT milliseconds-timestamp|KEEPTTL] [NX|XX] [GET]
+
+					//first we will go through the non supported options/flags
+					for _, k := range []string{"EX", "PX", "EXAT", "PXAT"} {
+						_, has := scanOptions(k, cmd.Options)
+						if has {
+							conn.WriteError(fmt.Sprintf("Error the option '%v' is not implemented for command '%v'", k, cmd.Cmd))
+							return
+						}
+					}
+
+					for _, k := range []string{"KEEPTTL", "NX", "XX"} {
+						if scanFlags(k, cmd.Options) {
+							conn.WriteError(fmt.Sprintf("Error the option flag '%v' is not implemented for command '%v'", k, cmd.Cmd))
+							return
+						}
+					}
+
+					_, hasGet := scanOptions("GET", cmd.Options)
+					dbMux.Lock()
+					var valCopy []byte
+					err := db.Update(func(txn *badger.Txn) error {
+						logrus.Debugf("cmd: %#v", cmd)
+						if hasGet {
+							item, err := txn.Get([]byte(cmd.Args[0]))
+							if err == nil {
+								valCopy, err = item.ValueCopy(nil)
+								if err != nil {
+									return err
+								}
+							}
+						}
+
+						return txn.Set([]byte(cmd.Args[0]), []byte(cmd.Args[1]))
+					})
+					dbMux.Unlock()
+					if err != nil {
+						logrus.Error(err)
+						conn.WriteError(fmt.Sprintf("Error %v", err))
+						return
+					}
+
+					if backup {
+						backupChan <- &aof.Command{
+							Name:      string(commandname.Set),
+							Arguments: cmd.Args,
+						}
+					}
+
+					if hasGet {
+						if valCopy == nil {
+							conn.WriteNull()
+						} else {
+							conn.WriteBulk(valCopy)
+						}
+					} else {
+						conn.WriteString("OK")
+					}
 				case commandname.Subscribe, commandname.PSubscribe:
 					for _, arg := range cmd.Args {
 						if cmd.Cmd == commandname.PSubscribe {
