@@ -167,6 +167,8 @@ func ParseCommand(tokens [][]byte) (*Command, error) {
 		argCount = OneToMany
 	case commandname.Get:
 		argCount = 1
+	case commandname.GetSet:
+		argCount = 2
 	case commandname.Ping:
 		argCount = ZeroToOne
 	case commandname.Publish:

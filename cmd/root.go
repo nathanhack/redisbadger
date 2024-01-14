@@ -239,7 +239,7 @@ var rootCmd = &cobra.Command{
 
 					conn.WriteInt(counts)
 				case commandname.Get:
-					//GET key
+					// GET key
 					var valCopy []byte
 					err := db.View(func(txn *badger.Txn) error {
 						item, err := txn.Get([]byte(cmd.Args[0]))
@@ -254,6 +254,43 @@ var rootCmd = &cobra.Command{
 					} else {
 						conn.WriteBulk(valCopy)
 					}
+				case commandname.GetSet:
+					// GETSET key value
+					dbMux.Lock()
+					var valCopy []byte
+					err := db.Update(func(txn *badger.Txn) error {
+						logrus.Debugf("cmd: %#v", cmd)
+
+						item, err := txn.Get([]byte(cmd.Args[0]))
+						if err == nil {
+							valCopy, err = item.ValueCopy(nil)
+							if err != nil {
+								return err
+							}
+						}
+
+						return txn.Set([]byte(cmd.Args[0]), []byte(cmd.Args[1]))
+					})
+					dbMux.Unlock()
+					if err != nil {
+						logrus.Error(err)
+						conn.WriteError(fmt.Sprintf("Error %v", err))
+						return
+					}
+
+					if backup {
+						backupChan <- &aof.Command{
+							Name:      string(commandname.Set),
+							Arguments: cmd.Args,
+						}
+					}
+
+					if valCopy == nil {
+						conn.WriteNull()
+					} else {
+						conn.WriteBulk(valCopy)
+					}
+
 				case commandname.Ping:
 					//PING [message]
 					switch len(cmd.Args) {

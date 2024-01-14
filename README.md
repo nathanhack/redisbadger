@@ -10,6 +10,7 @@ Currently, this repo is a WIP. Some commands are partial implementations. If a c
 * Del
 * Exists
 * Get
+* GetSet
 * Ping
 * Publish
 * Quit
