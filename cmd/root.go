@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/dgraph-io/badger/v4"
+	"github.com/dgraph-io/badger/v4/options"
 	"github.com/gobwas/glob"
 	"github.com/gol4ng/signal"
 	homedir "github.com/mitchellh/go-homedir"
@@ -34,6 +35,7 @@ var addr string
 var databasePathname string
 var debug bool
 var backup bool
+var zstCompressionLevel int
 var loads []string
 var backupChan chan *aof.Command
 var backupPathname string
@@ -83,7 +85,14 @@ var rootCmd = &cobra.Command{
 			logrus.Info("Debug enabled")
 		}
 
-		db, err := badger.Open(badger.DefaultOptions(databasePathname))
+		opts := badger.DefaultOptions(databasePathname)
+
+		if zstCompressionLevel > 0 {
+			opts = opts.WithCompression(options.ZSTD).
+				WithZSTDCompressionLevel(zstCompressionLevel)
+		}
+
+		db, err := badger.Open(opts)
 		if err != nil {
 			err = fmt.Errorf("error while opening badgerDB at %v:%v", databasePathname, err)
 			logrus.Error(err)
@@ -755,7 +764,7 @@ func init() {
 	rootCmd.Flags().StringVar(&databasePathname, "database", "./badger", "the directory that will store the badger database")
 	rootCmd.Flags().BoolVar(&backup, "backup", false, "enables an AOF backup file in the database directory")
 	rootCmd.Flags().StringSliceVar(&loads, "load", []string{}, "before starting the server load these specific AOFs")
-
+	rootCmd.Flags().IntVar(&zstCompressionLevel, "zstd", -1, "enables ZStd compression: valid values 1-20")
 	rootCmd.PersistentFlags().BoolVar(&debug, "debug", false, "enables debug logging")
 }
 
